@@ -27,6 +27,7 @@ class Settings(BaseSettings):
 
     # ── API ───────────────────────────────────────────────────────────────────
     api_v1_prefix: str = "/api/v1"
+    openai_api_key: str = ""  # Must be set in .env or environment variable
 
     # ── CORS ──────────────────────────────────────────────────────────────────
     cors_origins: List[str] = [
