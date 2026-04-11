@@ -1,0 +1,87 @@
+name: Deploy Frontend — S3 + CloudFront
+
+# Triggers on every push to main that touches the frontend or this workflow file
+on:
+  push:
+    branches: [main]
+    paths:
+      - "application/frontend/**"
+      - ".github/workflows/deploy-frontend.yml"
+
+  # Allow manual trigger from GitHub Actions UI
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Build → S3 → CloudFront
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout code ────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Set up Node.js ────────────────────────────────────────────────────
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: application/frontend/package-lock.json
+
+      # ── 3. Install npm dependencies ──────────────────────────────────────────
+      - name: Install dependencies
+        working-directory: application/frontend
+        run: npm ci
+
+      # ── 4. Build the React app ───────────────────────────────────────────────
+      #   Vite only exposes VITE_* prefixed vars to the browser bundle.
+      #   These are build-time values (safe to expose) — client ID and domain
+      #   are public identifiers, not secrets.
+      - name: Build React app
+        working-directory: application/frontend
+        env:
+          VITE_API_BASE_URL:    ${{ secrets.VITE_API_BASE_URL }}    # e.g. https://api.yourdomain.com/api/v1
+          VITE_AUTH0_DOMAIN:    ${{ secrets.VITE_AUTH0_DOMAIN }}    # e.g. dev-xyz.us.auth0.com
+          VITE_AUTH0_CLIENT_ID: ${{ secrets.VITE_AUTH0_CLIENT_ID }} # your Auth0 SPA client ID
+          VITE_AUTH0_AUDIENCE:  ${{ secrets.VITE_AUTH0_AUDIENCE }}  # e.g. https://api.yourdomain.com
+        run: npm run build
+        # Output is in: application/frontend/dist/
+
+      # ── 5. Authenticate with AWS ─────────────────────────────────────────────
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ secrets.AWS_REGION }}
+
+      # ── 6. Upload dist/ to S3 ────────────────────────────────────────────────
+      #   --delete removes files from S3 that no longer exist in the build.
+      #   JS/CSS files get long-term cache (they have hashed filenames from Vite).
+      - name: Sync build output to S3
+        run: |
+          aws s3 sync application/frontend/dist/ \
+            s3://${{ secrets.S3_BUCKET }} \
+            --delete \
+            --exclude "index.html" \
+            --cache-control "public, max-age=31536000, immutable"
+
+      # ── 7. Upload index.html with no-cache ───────────────────────────────────
+      #   index.html must NEVER be cached — it references the hashed JS/CSS
+      #   filenames. If it is stale, users get the old app.
+      - name: Upload index.html (no-cache)
+        run: |
+          aws s3 cp application/frontend/dist/index.html \
+            s3://${{ secrets.S3_BUCKET }}/index.html \
+            --cache-control "no-cache, no-store, must-revalidate" \
+            --metadata-directive REPLACE
+
+      # ── 8. Invalidate CloudFront edge cache ──────────────────────────────────
+      #   Tells all 400+ edge locations: discard cached files, fetch fresh from S3.
+      #   Without this, users may see the old version for up to 24 hours.
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --paths "/*"

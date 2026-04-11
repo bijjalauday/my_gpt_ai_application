@@ -1,0 +1,101 @@
+name: Deploy Backend — ECS Fargate
+
+# Triggers on every push to main that touches the backend or this workflow file
+on:
+  push:
+    branches: [main]
+    paths:
+      - "application/backend/**"
+      - ".github/workflows/deploy-backend.yml"
+
+  # Allow manual trigger from GitHub Actions UI
+  workflow_dispatch:
+
+env:
+  AWS_REGION:          ${{ secrets.AWS_REGION }}          # e.g. us-east-1
+  ECR_REPOSITORY:      ${{ secrets.ECR_REPOSITORY }}      # e.g. gpt-app-backend
+  ECS_CLUSTER:         ${{ secrets.ECS_CLUSTER }}         # e.g. gpt-app-cluster
+  ECS_SERVICE:         ${{ secrets.ECS_SERVICE }}         # e.g. gpt-app-backend-service
+  ECS_TASK_DEFINITION: ${{ secrets.ECS_TASK_DEFINITION }} # e.g. gpt-app-backend
+  CONTAINER_NAME:      ${{ secrets.CONTAINER_NAME }}      # e.g. gpt-app-backend
+
+jobs:
+  deploy:
+    name: Build → ECR → ECS
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout code ────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Authenticate with AWS ─────────────────────────────────────────────
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      # ── 3. Log Docker in to ECR ──────────────────────────────────────────────
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # ── 4. Build image, tag with commit SHA + latest, push to ECR ───────────
+      - name: Build and push Docker image to ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG:    ${{ github.sha }}
+        run: |
+          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY"
+
+          docker build \
+            -t "$IMAGE_URI:$IMAGE_TAG" \
+            -t "$IMAGE_URI:latest" \
+            ./application/backend
+
+          docker push "$IMAGE_URI:$IMAGE_TAG"
+          docker push "$IMAGE_URI:latest"
+
+          # Pass the immutable SHA-tagged URI to the next step
+          echo "image=$IMAGE_URI:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+
+      # ── 5. Download the current task definition JSON from ECS ───────────────
+      #   This avoids hardcoding CPU/RAM/logging config in the repo.
+      #   We just swap the image URI and re-register.
+      - name: Download current ECS task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "$ECS_TASK_DEFINITION" \
+            --query taskDefinition \
+            > task-definition.json
+
+      # ── 6. Replace the image URI in the task definition ─────────────────────
+      - name: Render new ECS task definition with updated image
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition:  task-definition.json
+          container-name:   ${{ env.CONTAINER_NAME }}
+          image:            ${{ steps.build-image.outputs.image }}
+          # Inject runtime secrets as environment variables into the container.
+          # These are stored as GitHub secrets — never baked into the image.
+          environment-variables: |
+            OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+            AUTH0_DOMAIN=${{ secrets.AUTH0_DOMAIN }}
+            AUTH0_AUDIENCE=${{ secrets.AUTH0_AUDIENCE }}
+            AUTH0_CLIENT_ID=${{ secrets.AUTH0_CLIENT_ID }}
+            CORS_ORIGINS=${{ secrets.CORS_ORIGINS }}
+            APP_ENV=production
+            APP_DEBUG=false
+
+      # ── 7. Register the new task definition revision and update the service ──
+      - name: Deploy updated task definition to ECS Fargate
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition:        ${{ steps.task-def.outputs.task-definition }}
+          service:                ${{ env.ECS_SERVICE }}
+          cluster:                ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true   # waits until new tasks are healthy
