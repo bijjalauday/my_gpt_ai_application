@@ -63,13 +63,27 @@ jobs:
           echo "image=$IMAGE_URI:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
 
       # ── 5. Download the current task definition JSON from ECS ───────────────
-      #   This avoids hardcoding CPU/RAM/logging config in the repo.
-      #   We just swap the image URI and re-register.
+      #   describe-task-definition returns extra read-only fields (registeredAt,
+      #   registeredBy, status, taskDefinitionArn, revision, requiresAttributes,
+      #   compatibilities, enableFaultInjection) that register-task-definition
+      #   does NOT accept. The v1 action uses AWS SDK v2 which is strict about
+      #   unexpected keys — so we strip them with jq before saving the file.
       - name: Download current ECS task definition
         run: |
           aws ecs describe-task-definition \
             --task-definition "$ECS_TASK_DEFINITION" \
             --query taskDefinition \
+          | jq 'del(
+              .taskDefinitionArn,
+              .revision,
+              .status,
+              .requiresAttributes,
+              .compatibilities,
+              .registeredAt,
+              .registeredBy,
+              .deregisteredAt,
+              .enableFaultInjection
+            )' \
             > task-definition.json
 
       # ── 6. Replace the image URI in the task definition ─────────────────────
