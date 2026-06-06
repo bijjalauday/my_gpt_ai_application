@@ -26,6 +26,9 @@ import {
 import { useAuth0 } from '@auth0/auth0-react'
 import { sendChatCompletion, sendChatStream } from '../services/api'
 
+// SSO master switch — must match VITE_AUTH_ENABLED in .env.
+const authEnabled = import.meta.env.VITE_AUTH_ENABLED === 'true'
+
 const MODELS = ['gpt-3.5-turbo', 'gpt-4', 'gpt-4-turbo', 'gpt-4o']
 
 const NAV_ITEMS = [
@@ -147,6 +150,8 @@ function SliderField({ icon: Icon, label, min, max, step, value, onChange, forma
 }
 
 export default function GptChat() {
+  // Always called (Rules of Hooks). When SSO is off there is no provider, so
+  // these are harmless defaults and we never invoke logout/getAccessTokenSilently.
   const { user, logout, getAccessTokenSilently } = useAuth0()
 
   const [messages, setMessages]         = useState([])
@@ -199,14 +204,16 @@ export default function GptChat() {
     setIsTyping(true)
 
     let token = ''
-    try {
-      token = await getAccessTokenSilently({
-        authorizationParams: { audience: import.meta.env.VITE_AUTH0_AUDIENCE },
-      })
-    } catch (err) {
-      setErrorMsg('Session expired — please sign in again')
-      setIsTyping(false)
-      return
+    if (authEnabled) {
+      try {
+        token = await getAccessTokenSilently({
+          authorizationParams: { audience: import.meta.env.VITE_AUTH0_AUDIENCE },
+        })
+      } catch (err) {
+        setErrorMsg('Session expired — please sign in again')
+        setIsTyping(false)
+        return
+      }
     }
 
     const apiMessages = buildApiMessages(messages, userContent)
@@ -358,22 +365,24 @@ export default function GptChat() {
               {rightPanel ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
             </button>
 
-            {/* User avatar + logout */}
-            <div className="flex items-center gap-2 border-l border-gray-800 pl-4">
-              {user?.picture
-                ? <img src={user.picture} alt={user.name} className="w-7 h-7 rounded-full" />
-                : <div className="w-7 h-7 bg-gray-700 rounded-full flex items-center justify-center">
-                    <User className="w-4 h-4 text-gray-300" />
-                  </div>
-              }
-              <button
-                onClick={() => logout({ logoutParams: { returnTo: window.location.origin } })}
-                title="Sign out"
-                className="text-gray-500 hover:text-red-400 hover:bg-gray-800 p-1.5 rounded-lg transition-all"
-              >
-                <LogOut className="w-4 h-4" />
-              </button>
-            </div>
+            {/* SSO: User avatar + logout (only shown when login is enabled) */}
+            {authEnabled && (
+              <div className="flex items-center gap-2 border-l border-gray-800 pl-4">
+                {user?.picture
+                  ? <img src={user.picture} alt={user.name} className="w-7 h-7 rounded-full" />
+                  : <div className="w-7 h-7 bg-gray-700 rounded-full flex items-center justify-center">
+                      <User className="w-4 h-4 text-gray-300" />
+                    </div>
+                }
+                <button
+                  onClick={() => logout({ logoutParams: { returnTo: window.location.origin } })}
+                  title="Sign out"
+                  className="text-gray-500 hover:text-red-400 hover:bg-gray-800 p-1.5 rounded-lg transition-all"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+            )}
           </div>
         </header>
 

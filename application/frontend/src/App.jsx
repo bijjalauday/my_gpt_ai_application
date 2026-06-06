@@ -1,8 +1,16 @@
 import { useAuth0 } from '@auth0/auth0-react'
 import GptChat from './components/GptChat'
 
+// SSO master switch — must match VITE_AUTH_ENABLED in .env.
+const authEnabled = import.meta.env.VITE_AUTH_ENABLED === 'true'
+
 function App() {
+  // useAuth0 is always called (Rules of Hooks). When SSO is off there is no
+  // <Auth0Provider>, so these values are just defaults and we never use them.
   const { isLoading, isAuthenticated, loginWithRedirect } = useAuth0()
+
+  // SSO disabled → go straight to the chat, no login required.
+  if (!authEnabled) return <GptChat />
 
   if (isLoading) {
     return (

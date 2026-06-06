@@ -40,7 +40,9 @@ class Settings(BaseSettings):
     openai_default_temperature: float = 0.7
     openai_default_max_tokens: int = 8000
 
-    # ── Auth0 ─────────────────────────────────────────────────────────────────
+    # ── Auth0 (SSO) ───────────────────────────────────────────────────────────
+    # Master on/off switch. When False, the API is open (no token required).
+    auth_enabled: bool = False
     auth0_domain: str = ""
     auth0_audience: str = ""
     auth0_client_id: str = ""

@@ -15,7 +15,7 @@ export async function sendChatCompletion({ messages, model, temperature, maxToke
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`,
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
     },
     body: JSON.stringify({
       messages,
@@ -56,7 +56,7 @@ export async function sendChatStream({ messages, model, temperature, maxTokens, 
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
       },
       body: JSON.stringify({
         messages,

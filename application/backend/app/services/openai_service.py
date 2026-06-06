@@ -39,6 +39,7 @@ async def complete_chat(request: ChatRequest) -> ChatResponse:
     Send a standard (non-streaming) chat completion request to OpenAI
     and return a structured ChatResponse.
     """
+    print(request)
     client = _get_client()
     openai_messages = _build_openai_messages(request)
 
@@ -59,7 +60,7 @@ async def complete_chat(request: ChatRequest) -> ChatResponse:
     except OpenAIError as exc:
         logger.error("OpenAI API error: %s", exc)
         raise
-
+    print(response)
     choice = response.choices[0]
     usage = response.usage
 

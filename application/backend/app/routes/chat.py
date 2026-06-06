@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -26,16 +26,17 @@ router = APIRouter(prefix="/chat", tags=["Chat"])
 )
 async def chat_completions(
     request: ChatRequest,
-    user: Dict[str, Any] = Depends(verify_token),
+    user: Optional[Dict[str, Any]] = Depends(verify_token),
 ):
     """
     POST /api/v1/chat/completions
 
     - **Non-streaming**: returns a JSON `ChatResponse`.
     - **Streaming**: returns an `text/event-stream` SSE response.
-    - Requires a valid Auth0 Bearer token.
+    - When SSO is enabled (AUTH_ENABLED=true), requires a valid Auth0 Bearer token.
     """
-    logger.debug("Request from user sub=%s", user.get("sub"))
+    if user:
+        logger.debug("Request from user sub=%s", user.get("sub"))
 
     if request.stream:
         return StreamingResponse(
@@ -55,7 +56,5 @@ async def chat_completions(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"OpenAI API error: {exc}",
         ) from exc
-
-    return result
 
     return result

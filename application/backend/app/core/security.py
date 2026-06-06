@@ -1,19 +1,19 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import httpx
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
 
 from app.core.config import get_settings
 
 logger = logging.getLogger("my_gpt_api.core.security")
 
-# FastAPI security scheme — expects: Authorization: Bearer <token>
-bearer_scheme = HTTPBearer()
+# auto_error=False → when SSO is disabled we must NOT force an Authorization
+# header. With auto_error=True, FastAPI would reject header-less requests itself.
+bearer_scheme = HTTPBearer(auto_error=False)
 
 # In-memory JWKS cache (refreshed lazily)
 _jwks_cache: Dict[str, Any] = {}
@@ -41,26 +41,42 @@ async def _get_jwks() -> Dict[str, Any]:
 
 
 async def verify_token(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
-) -> Dict[str, Any]:
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+) -> Optional[Dict[str, Any]]:
     """
     FastAPI dependency — validates the JWT Bearer token from the request.
+
+    Behaviour depends on the AUTH_ENABLED setting:
+      • AUTH_ENABLED=false → no-op, returns None (the API is open).
+      • AUTH_ENABLED=true  → requires a valid Auth0 JWT, returns its claims.
 
     Usage in a route:
         async def my_route(user=Depends(verify_token)):
             ...
 
-    Returns the decoded token payload (claims) on success.
-    Raises HTTP 401 on any validation failure.
+    Raises HTTP 401 on any validation failure (only when SSO is enabled).
     """
-    token = credentials.credentials
     settings = get_settings()
+
+    # SSO switched off → let every request through without a token.
+    if not settings.auth_enabled:
+        return None
+
+    # `jose` is only needed when SSO is on. Import it lazily so the backend can
+    # still start without the dependency installed while auth is disabled.
+    from jose import JWTError, jwt
 
     credentials_error = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid or expired token",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+    # SSO on but no Authorization header was sent.
+    if credentials is None:
+        raise credentials_error
+
+    token = credentials.credentials
 
     try:
         jwks = await _get_jwks()
